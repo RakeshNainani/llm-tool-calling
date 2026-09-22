@@ -992,31 +992,179 @@ The tool schema defines:
 The matching name `get_order_status` does not automatically connect the schema to the Python function. Controlled mapping and execution will be added in later stages.
 
 ---
+## Stage 5 — Tool Argument Validation ✅
 
-## Next Stage — Tool Argument Validation
+LLM-generated tool arguments are now parsed and validated before they can be used by the application.
 
-LLM-generated tool arguments must be treated as untrusted input.
+### What Was Added
 
-Stage 5 will introduce Pydantic validation:
+* [x] Created `schemas/tools.py`
+* [x] Added the `GetOrderStatusArgs` Pydantic model
+* [x] Defined `order_id` as a required string
+* [x] Added minimum-length validation for `order_id`
+* [x] Inspected raw arguments returned by the LLM
+* [x] Parsed the LLM-generated JSON string using `json.loads()`
+* [x] Validated parsed arguments using Pydantic
+* [x] Verified that missing `order_id` is rejected
+* [x] Verified that an empty `order_id` is rejected
+* [x] Added automated tests for tool argument validation
 
-```text
+### Current Validation Flow
+
+The LLM returns tool arguments as a JSON string:
+
+```text id="f3l5ge"
+'{"order_id":"12345"}'
+```
+
+The application does not pass this directly to the tool.
+
+Instead:
+
+```text id="ftdk06"
 LLM
  │
  ▼
-Tool Call
+Tool Call Request
+ │
+ └── arguments:
+     '{"order_id":"12345"}'
+ │
  │
  ▼
-Raw Arguments
- │
- │
- │ '{"order_id":"12345"}'
- ▼
-JSON Parsing
+json.loads()
  │
  ▼
 Python Dictionary
  │
- │ {"order_id": "12345"}
+ └── {"order_id": "12345"}
+ │
+ │
+ ▼
+Pydantic
+ │
+ ▼
+GetOrderStatusArgs
+ │
+ └── order_id = "12345"
+ │
+ ▼
+Validated Arguments
+```
+
+### Parsing vs Validation
+
+JSON parsing and application validation solve different problems.
+
+```text id="8acbxm"
+json.loads()
+     │
+     └── "Is this valid JSON?"
+              │
+              ▼
+         Python object
+
+
+Pydantic
+     │
+     └── "Does this data satisfy
+          my application's contract?"
+              │
+              ▼
+        Validated model
+```
+
+For example, this is valid JSON:
+
+```json id="49t5y5"
+{}
+```
+
+but it is not valid input for `get_order_status` because `order_id` is required.
+
+Similarly:
+
+```json id="k23axr"
+{
+  "order_id": ""
+}
+```
+
+is valid JSON but fails application validation because `order_id` must contain at least one character.
+
+### Pydantic Argument Model
+
+The application now defines the contract:
+
+```python id="2s7shb"
+class GetOrderStatusArgs(BaseModel):
+    """Arguments accepted by the get_order_status tool."""
+
+    order_id: str = Field(
+        min_length=1,
+        description="Unique order identifier.",
+    )
+```
+
+This provides an explicit validation boundary between model-generated data and application execution.
+
+### Tool Schema vs Validation Schema
+
+The project now contains two related but distinct schemas:
+
+```text id="9hs6hn"
+tools/schemas.py
+      │
+      │ Tool definition
+      ▼
+     LLM
+      │
+      │ Generates tool request
+      ▼
+Raw Arguments
+      │
+      ▼
+schemas/tools.py
+      │
+      │ Pydantic validation
+      ▼
+ Application
+```
+
+`tools/schemas.py` answers:
+
+> What arguments should the LLM generate?
+
+`schemas/tools.py` answers:
+
+> What arguments will the application accept?
+
+These are separate responsibilities.
+
+### Current Architecture
+
+The project has now progressed to:
+
+```text id="ayk9tt"
+User
+ │
+ ▼
+LLM
+ │
+ │ sees tool schema
+ ▼
+Tool Selection
+ │
+ ▼
+Tool Call Request
+ │
+ ├── name: get_order_status
+ │
+ └── arguments: '{"order_id":"12345"}'
+ │
+ ▼
+JSON Parsing
+ │
  ▼
 Pydantic Validation
  │
@@ -1024,33 +1172,103 @@ Pydantic Validation
 Validated Arguments
  │
  ▼
-Safe input for the application
+STOP
 ```
 
-The goal is to ensure that tool arguments are parsed and validated **before** they are allowed to reach application tools.
+The application still does **not automatically execute** `get_order_status()`.
+
+That separation is intentional.
+
+---
+
+## Next Stage — Tool Registry
+
+The next problem is connecting:
+
+```text id="n4fmra"
+"get_order_status"
+```
+
+returned by the LLM to:
+
+```python id="1bt9hy"
+get_order_status()
+```
+
+the actual Python function.
+
+Instead of scattering logic such as:
+
+```python id="db75qf"
+if tool_name == "get_order_status":
+    ...
+elif tool_name == "get_customer_orders":
+    ...
+elif tool_name == "another_tool":
+    ...
+```
+
+throughout the application, Stage 6 will introduce a **Tool Registry**.
+
+Target architecture:
+
+```text id="ovc4fe"
+LLM Tool Request
+       │
+       ├── name
+       └── arguments
+       │
+       ▼
+   Tool Registry
+       │
+       ├── Tool Schema
+       ├── Validation Model
+       └── Python Function
+       │
+       ▼
+Controlled Tool Execution
+```
+
+Conceptually:
+
+```text id="31s7tg"
+get_order_status
+       │
+       ▼
+┌──────────────────────────────┐
+│ Tool Registry                │
+│                              │
+│ name                         │
+│   get_order_status           │
+│                              │
+│ validator                    │
+│   GetOrderStatusArgs         │
+│                              │
+│ function                     │
+│   get_order_status()         │
+└──────────────────────────────┘
+```
+
+This will give the application a controlled mapping between model-visible tool names and executable Python capabilities.
 
 ### Remaining Roadmap
 
-```text
-Stage 5
-Tool Argument Validation
-        ↓
+```text id="l03wyi"
 Stage 6
 Tool Registry
-        ↓
+      ↓
 Stage 7
 LLM → Tool → LLM Execution Loop
-        ↓
+      ↓
 Stage 8
 Order Assistant API
-        ↓
+      ↓
 Stage 9
 Multiple Tools
-        ↓
+      ↓
 Stage 10
 Production Hardening
 ```
-
 
 ---
 
