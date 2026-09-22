@@ -2388,6 +2388,390 @@ The application is therefore responsible not only for executing tools, but also 
 
 ---
 
+## Stage 11 — LLM Provider Hardening
+
+Stage 11 strengthens the boundary between the application and the external LLM provider.
+
+The main goals are:
+
+- remove provider initialization from module import
+- introduce dependency injection
+- isolate provider-specific failures
+- configure explicit provider timeouts
+- add bounded retries
+- distinguish retryable and non-retryable failures
+- add provider observability
+- improve testability without real API calls
+
+### 11.1 Dependency Injection
+
+Previously, the Groq client and application services were created globally when `main.py` was imported:
+
+```text
+Import main.py
+    │
+    ▼
+GroqLLMClient()
+    │
+    ├── ChatService
+    └── OrderAssistantService
+```
+
+The application now uses FastAPI dependency injection:
+
+```text
+HTTP Request
+    │
+    ▼
+FastAPI
+    │
+    ▼
+Depends(get_llm_client)
+    │
+    ▼
+LLMClient
+    │
+    ▼
+GroqLLMClient
+```
+
+Production uses:
+
+```text
+get_llm_client()
+    ↓
+GroqLLMClient
+```
+
+Tests can override the dependency:
+
+```text
+get_llm_client()
+    ↓
+FakeLLMClient
+```
+
+This removes direct provider construction from the API module and creates a clean testing seam.
+
+---
+
+### 11.2 Provider Configuration Injection
+
+`GroqLLMClient` supports explicit configuration:
+
+```python
+GroqLLMClient(
+    api_key="...",
+    model="...",
+    timeout=30.0,
+)
+```
+
+Production values can still come from environment variables:
+
+```text
+GROQ_API_KEY
+GROQ_MODEL
+GROQ_TIMEOUT_SECONDS
+```
+
+This makes provider configuration easier to test and avoids unnecessary dependence on global environment state.
+
+---
+
+### 11.3 Provider Error Normalization
+
+Groq SDK exceptions are translated into an application-level exception:
+
+```text
+Groq SDK Exception
+        │
+        ▼
+GroqLLMClient
+        │
+        ▼
+LLMProviderError
+```
+
+Current error taxonomy:
+
+```text
+APITimeoutError
+    ↓
+timeout
+
+APIConnectionError
+    ↓
+connection
+
+RateLimitError
+    ↓
+rate_limit
+
+AuthenticationError
+    ↓
+authentication
+
+APIStatusError
+    ↓
+provider_error
+```
+
+The rest of the application therefore does not need to understand Groq-specific exception classes.
+
+---
+
+### 11.4 Explicit Provider Timeout
+
+The application defines an explicit provider timeout:
+
+```text
+GROQ_TIMEOUT_SECONDS=30
+```
+
+Flow:
+
+```text
+Application
+    │
+    │ timeout policy
+    ▼
+Groq SDK
+    │
+    ▼
+Provider
+```
+
+If the provider exceeds the timeout:
+
+```text
+APITimeoutError
+      ↓
+GroqLLMClient
+      ↓
+LLMProviderError
+error_type="timeout"
+```
+
+This prevents provider calls from depending solely on implicit SDK timeout behavior.
+
+---
+
+### 11.5 Bounded Retry Policy
+
+Transient provider failures can be retried.
+
+Retryable:
+
+```text
+timeout
+connection
+rate_limit
+```
+
+Non-retryable:
+
+```text
+authentication
+```
+
+The retry loop is bounded:
+
+```text
+Initial attempt
+      │
+      ├── success → return
+      │
+      └── transient failure
+                │
+                ▼
+              retry
+                │
+                ▼
+          maximum reached?
+             /       \
+           no         yes
+           │           │
+           ▼           ▼
+        retry    LLMProviderError
+```
+
+With:
+
+```text
+max_retries = 2
+```
+
+the maximum number of provider attempts is:
+
+```text
+1 initial attempt + 2 retries = 3 attempts
+```
+
+SDK-level retries are disabled so the application owns the retry policy explicitly.
+
+---
+
+### 11.6 Retry Recovery
+
+The retry implementation supports recovery from temporary provider failures.
+
+Example:
+
+```text
+Attempt 1
+    ↓
+Connection failure
+    ↓
+Retry
+    ↓
+Attempt 2
+    ↓
+Success
+    ↓
+Return response
+```
+
+Permanent failures such as authentication errors fail immediately instead of wasting additional attempts.
+
+---
+
+### 11.7 Retry Observability
+
+Retries are logged with operational metadata.
+
+Example:
+
+```text
+Retrying LLM provider request:
+provider=groq
+retry=1
+max_retries=2
+delay_seconds=0.10
+```
+
+Exhausted retries are also logged:
+
+```text
+LLM provider retries exhausted:
+provider=groq
+attempts=3
+```
+
+This makes transient provider instability visible during troubleshooting.
+
+---
+
+### 11.8 LLM Provider Latency
+
+Each provider attempt records execution duration.
+
+Example:
+
+```text
+LLM provider request succeeded:
+provider=groq
+attempt=1
+duration_ms=820.45
+```
+
+With retries:
+
+```text
+Request
+   │
+   ▼
+Attempt 1 ── 350 ms ──► failure
+   │
+   ▼
+Backoff
+   │
+   ▼
+Attempt 2 ── 820 ms ──► success
+```
+
+This provides the foundation for future:
+
+```text
+latency dashboards
+provider performance monitoring
+SLA/SLO metrics
+alerting
+distributed tracing
+```
+
+---
+
+### Stage 11 Architecture
+
+At the end of Stage 11:
+
+```text
+                         FastAPI
+                            │
+                            ▼
+                  Dependency Injection
+                            │
+                            ▼
+                        LLMClient
+                            │
+                            ▼
+                     GroqLLMClient
+                            │
+              ┌─────────────┼─────────────┐
+              │             │             │
+           Timeout        Retry       Observability
+              │             │             │
+              │        bounded retry      ├── attempts
+              │        + backoff          ├── latency
+              │                           └── outcome
+              │
+              ▼
+                  Groq Provider Request
+                            │
+                  ┌─────────┴─────────┐
+                  │                   │
+               Success             Failure
+                  │                   │
+                  ▼                   ▼
+              Response        Exception Mapping
+                                      │
+                                      ▼
+                              LLMProviderError
+```
+
+The application now owns the provider resilience policy rather than allowing provider SDK behavior to leak throughout the application.
+
+### Stage 11 Key Learning
+
+The provider adapter is responsible for more than translating API calls.
+
+It acts as an **anti-corruption layer** between the application and the external provider:
+
+```text
+Application
+    │
+    ▼
+Stable LLMClient Contract
+    │
+    ▼
+Provider Adapter
+    │
+    ├── configuration
+    ├── timeout
+    ├── retry
+    ├── exception translation
+    ├── latency measurement
+    └── logging
+    │
+    ▼
+External LLM Provider
+```
+
+This allows the rest of the application to remain largely provider-independent.
+
+---
+
 # Current Limitations
 
 The current implementation intentionally remains simple while the core concepts are being learned.

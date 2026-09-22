@@ -2,9 +2,11 @@
 
 
 from uuid import uuid4
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 
-from llm_tool_calling.llm.groq_client import GroqLLMClient
+# from llm_tool_calling.llm.groq_client import GroqLLMClient
+from llm_tool_calling.dependencies import get_llm_client
+from llm_tool_calling.llm.base import LLMClient
 from llm_tool_calling.schemas.chat import ChatRequest, ChatResponse
 from llm_tool_calling.services.chat_service import ChatService
 
@@ -15,10 +17,9 @@ from llm_tool_calling.schemas.order_assistant import (
 from llm_tool_calling.services.order_assistant import OrderAssistantService
 
 
-llm = GroqLLMClient()
-chat_service  = ChatService(llm)
-
-order_assistant_service = OrderAssistantService(llm)
+# llm = GroqLLMClient()
+# chat_service  = ChatService(llm)
+# order_assistant_service = OrderAssistantService(llm)
 
 app = FastAPI(
     title="LLM Tool Calling Demo",
@@ -53,10 +54,21 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
+def chat(
+    request: ChatRequest,
+    llm: LLMClient = Depends(get_llm_client),
+) -> ChatResponse:
     """Handle chat requests and return responses."""
-    answer = chat_service.answer(request.message)
-    return ChatResponse(answer=answer)
+
+    chat_service = ChatService(llm)
+
+    answer = chat_service.answer(
+        request.message
+    )
+
+    return ChatResponse(
+        answer=answer
+    )
 
 
 @app.post(
@@ -66,8 +78,11 @@ def chat(request: ChatRequest) -> ChatResponse:
 def order_assistant(
     request: OrderAssistantRequest,
     http_request: Request,
+    llm: LLMClient = Depends(get_llm_client),
 ) -> OrderAssistantResponse:
     """Answer order-related requests using LLM tool calling."""
+
+    order_assistant_service = OrderAssistantService(llm)
 
     answer = order_assistant_service.answer(
         request.message,
