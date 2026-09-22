@@ -706,29 +706,239 @@ Tool Execution
 
 # Project Status
 
-Current milestone:
+# Project Status
 
-Stage 2 — LLM Abstraction Layer
+## Stage 1 — Project Foundation ✅
 
 Completed:
 
-- [x] Project initialized
-- [x] Virtual environment created
-- [x] Dependencies installed
-- [x] Package structure created
-- [x] FastAPI application created
-- [x] Health endpoint created
-- [x] Provider-independent `LLMClient` abstraction
-- [x] Groq provider adapter
-- [x] Environment-based model configuration
-- [x] `ChatService`
-- [x] Pydantic chat request/response schemas
-- [x] `POST /chat` endpoint
-- [x] Fake LLM unit tests
+* [x] Project initialized with `uv`
+* [x] Virtual environment created
+* [x] Dependencies installed
+* [x] Python package structure created
+* [x] FastAPI application created
+* [x] `GET /health` endpoint created
+* [x] Development server verified
 
-Next:
+---
 
-Stage 3 — First Tool: `get_order_status`
+## Stage 2 — LLM Abstraction ✅
+
+Completed:
+
+* [x] Created provider-independent `LLMClient` abstraction
+* [x] Implemented `GroqLLMClient`
+* [x] Added environment-based API key and model configuration
+* [x] Added `ChatService`
+* [x] Added Pydantic `ChatRequest` and `ChatResponse` schemas
+* [x] Added `POST /chat` endpoint
+* [x] Added `FakeLLMClient` for testing
+* [x] Verified application logic without making real LLM calls
+* [x] Verified Groq integration
+
+Current LLM architecture:
+
+```text
+FastAPI
+   │
+   ▼
+ChatService
+   │
+   ▼
+LLMClient
+   ▲
+   │
+GroqLLMClient
+   │
+   ▼
+Groq SDK
+   │
+   ▼
+LLM
+```
+
+This keeps the application layer independent of a specific LLM provider.
+
+---
+
+## Stage 3 — First Tool Implementation ✅
+
+Implemented:
+
+```text
+get_order_status(order_id)
+```
+
+Completed:
+
+* [x] Created `tools/order_tools.py`
+* [x] Implemented `get_order_status()`
+* [x] Added mock order data
+* [x] Added handling for unknown orders
+* [x] Tested the tool independently from the LLM
+* [x] Added unit tests for shipped orders
+* [x] Added unit tests for processing orders
+* [x] Added unit tests for unknown orders
+
+Current tool architecture:
+
+```text
+Python Application
+       │
+       ▼
+get_order_status()
+       │
+       ▼
+Mock Order Data
+       │
+       ▼
+Order Result
+```
+
+At this stage the tool is an ordinary Python application capability.
+
+The LLM does **not yet know that this tool exists**.
+
+This separation is intentional:
+
+```text
+Tool Implementation
+        ≠
+Tool Schema
+        ≠
+Tool Execution
+```
+
+The tool implementation defines what the **application can do**.
+
+The next stage will define what the **model is told it can request**.
+
+---
+
+## Current Test Coverage
+
+The project currently tests:
+
+```text
+LLM abstraction
+    │
+    ├── FakeLLMClient
+    │
+    └── ChatService
+         
+Order tools
+    │
+    ├── shipped order
+    ├── processing order
+    └── unknown order
+```
+
+Run all tests with:
+
+```powershell
+uv run pytest -v
+```
+
+Expected result at this milestone:
+
+```text
+5 passed
+```
+
+---
+
+# Next Stage
+
+## Stage 4 — Tool Schema
+
+The next milestone will expose the `get_order_status` capability to the LLM through a model-facing tool schema.
+
+The architecture will evolve from:
+
+```text
+LLM
+
+        no connection
+
+get_order_status()
+```
+
+to:
+
+```text
+User
+ │
+ ▼
+LLM
+ │
+ │ receives tool definition
+ ▼
+Tool Schema
+ │
+ │ describes
+ ▼
+get_order_status
+```
+
+The model will receive information describing:
+
+```text
+Tool name
+Tool description
+Input parameters
+Required parameters
+```
+
+Conceptually:
+
+```json
+{
+  "name": "get_order_status",
+  "description": "Get the current fulfillment status of an order.",
+  "parameters": {
+    "order_id": "string"
+  }
+}
+```
+
+The important distinction remains:
+
+```text
+LLM selects/request tool
+          │
+          ▼
+Structured Tool Request
+
+          ≠
+
+Python function execution
+```
+
+The application will remain responsible for validating and executing any requested tool.
+
+After the tool schema is working, subsequent stages will introduce:
+
+```text
+Stage 5
+Tool Argument Validation
+        ↓
+Stage 6
+Tool Registry
+        ↓
+Stage 7
+LLM → Tool → LLM Loop
+        ↓
+Stage 8
+Order Assistant API
+        ↓
+Stage 9
+Multiple Tools
+        ↓
+Stage 10
+Production Hardening
+```
+
+
 
 ---
 
