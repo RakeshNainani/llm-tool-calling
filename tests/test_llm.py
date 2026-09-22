@@ -10,6 +10,14 @@ class FakeLLMClient(LLMClient):
     def generate(self, message: str) -> str:
         return f"Fake response for: {message}"
 
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ):
+        """Return a fake tool-enabled response."""
+        raise NotImplementedError
+
 
 def test_fake_llm_client() -> None:
     llm = FakeLLMClient()

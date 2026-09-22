@@ -1,370 +1,698 @@
-# LLM Tool Calling
+# LLM Tool Calling Demo
 
-A hands-on Python project for learning how **LLM tool/function calling** works inside a production-style application architecture.
+A hands-on Python project for learning how production-style LLM applications use **tool / function calling**.
 
-The project demonstrates how an LLM can decide that it needs an external capability, request a tool with structured arguments, and allow the application to validate and execute that request safely.
+The project demonstrates how an LLM can decide that external information or an application capability is required, request a tool, and allow the **application** to validate and execute that tool before returning the result to the LLM.
 
-The central architectural principle is:
+The key principle is:
 
-> **The model proposes an action. The application validates, authorizes, executes, and observes that action.**
-
-The LLM does **not** directly execute Python functions or control external systems.
+> The LLM requests an action. The application controls and executes the action.
 
 ---
 
 ## Learning Objectives
 
-This project is designed to build practical understanding of:
+This project is designed to demonstrate:
 
-* LLM tool/function calling
-* Tool schemas
-* Tool selection
-* Tool argument validation
-* Pydantic validation
-* Tool execution
-* Tool registries
-* LLM abstraction layers
-* Provider adapters
-* FastAPI service architecture
-* LLM → Tool → LLM execution loops
-* Error handling
-* Guardrails and authorization boundaries
-* Enterprise agent architecture
+- LLM provider abstraction
+- Dependency injection
+- Structured tool definitions
+- LLM tool / function calling
+- Tool argument validation with Pydantic
+- Tool registries
+- Controlled tool execution
+- LLM → Tool → LLM orchestration
+- Conversation history during tool calling
+- Separation of model reasoning from application execution
+- Testing LLM applications without external API calls
+- FastAPI integration
 
 ---
 
-## Architecture
+## Current Architecture
 
-The project will evolve toward the following architecture:
+```text
+User / Client
+     |
+     v
+FastAPI
+     |
+     v
+Application Service
+     |
+     +----------------------+
+     |                      |
+     v                      v
+LLMClient              Tool Layer
+     |                      |
+     v                      v
+GroqLLMClient          ORDER_TOOLS
+     |                      |
+     v                      v
+Groq SDK              TOOL_REGISTRY
+                            |
+                            v
+                     Argument Validation
+                            |
+                            v
+                       execute_tool()
+                            |
+                            v
+                    get_order_status()
+```
 
-                         Client
-                           │
-                           ▼
-                        FastAPI
-                           │
-                           ▼
-                   Application Service
-                           │
-                           ▼
-                       LLM Layer
-                           │
-                           ▼
-                          LLM
-                           │
-                           ▼
-                     Tool Decision
-                           │
-                           ▼
-                     Tool Request
-                           │
-                           ▼
-                  Schema Validation
-                           │
-                           ▼
-                     Tool Registry
-                      /         \
-                     ▼           ▼
-          get_order_status   get_customer_orders
-                     │           │
-                     └─────┬─────┘
-                           ▼
-                  Systems / APIs / DB
-                           │
-                           ▼
-                      Tool Result
-                           │
-                           ▼
-                          LLM
-                           │
-                           ▼
+The `OrderAssistantService` orchestrates the interaction between the LLM and the tool layer.
+
+---
+
+## Tool Calling Flow
+
+The complete tool-calling lifecycle currently works as follows:
+
+```text
+User Request
+     |
+     v
+LLM Call #1
+     |
+     v
+Does the model request a tool?
+     |
+     +-------------------+
+     |                   |
+    No                  Yes
+     |                   |
+     v                   v
+Return LLM         Read Tool Request
+Response                  |
+                          v
+                   Validate Tool Name
+                          |
+                          v
+                  Parse Tool Arguments
+                          |
+                          v
+                 Pydantic Validation
+                          |
+                          v
+                    Execute Tool
+                          |
+                          v
+                     Tool Result
+                          |
+                          v
+              Add Result to Message History
+                          |
+                          v
+                     LLM Call #2
+                          |
+                          v
                     Final Response
-
-
----
-
-## Tool Calling Mental Model
-
-A common misconception is:
-
-                LLM
-                 ↓
-            Python Function
-
-
-The actual architecture is:
-           User
-            ↓
-        Application
-            ↓
-           LLM
-            ↓
-        Structured Tool Request
-            ↓
-        Application Validation
-            ↓
-        Tool Registry
-            ↓
-        Python Function
-            ↓
-        External System
-            ↓
-        Tool Result
-            ↓
-           LLM
-            ↓
-        Final Response
-
-The **application remains the control plane**.
-
----
-
-## Example
-
-A user asks:   
-    Where is order 12345?
-
-The LLM determines that it does not have the current order status and requests:
-    get_order_status(order_id="12345")
-
-Conceptually, the model generates structured data similar to:
-
-```json
-{
-  "name": "get_order_status",
-  "arguments": {
-    "order_id": "12345"
-  }
-}
 ```
-
-The application then:
-
-1. Detects the tool request
-2. Validates the arguments
-3. Checks whether the tool is allowed
-4. Finds the tool implementation
-5. Executes the Python function
-6. Sends the tool result back to the LLM
-7. Returns the final response to the user
-
----
-
-# Project Setup
-
-## Prerequisites
-
-Make sure the following are installed:
-
-* Python 3.12+
-* `uv`
-* Git
-* VS Code or another Python IDE
-* Groq API key
-
-Verify the installations:
-
-```powershell
-python --version
-uv --version
-git --version
-```
-
----
-
-## 1. Create the Project Directory
-
-Open PowerShell and navigate to your development directory:
-
-```powershell
-cd C:\Work\code_practise
-```
-
-Create the project:
-
-```powershell
-mkdir llm-tool-calling
-cd llm-tool-calling
-```
-
----
-
-## 2. Initialize the Python Project
-
-Initialize the project using `uv`:
-
-```powershell
-uv init
-```
-
-This creates the initial Python project configuration including:
-
-```text
-pyproject.toml
-```
-
----
-
-## 3. Create the Virtual Environment
-
-Synchronize the project:
-
-```powershell
-uv sync
-```
-
-This creates:
-
-```text
-.venv/
-```
-
-Activate the environment in PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-The PowerShell prompt should now show the active environment.
 
 Example:
 
 ```text
-(llm-tool-calling) PS C:\Work\code_practise\llm-tool-calling>
+User:
+"Where is order 12345?"
+
+        |
+        v
+
+LLM:
+"I need get_order_status."
+
+        |
+        v
+
+Tool Request:
+get_order_status(
+    order_id="12345"
+)
+
+        |
+        v
+
+Application:
+Validates arguments
+
+        |
+        v
+
+Application:
+Executes get_order_status()
+
+        |
+        v
+
+Tool Result:
+{
+    "order_id": "12345",
+    "status": "shipped",
+    "estimated_delivery": "2026-09-25"
+}
+
+        |
+        v
+
+LLM:
+"Order 12345 has shipped and is expected
+to arrive on September 25, 2026."
 ```
 
-> Activating the environment is optional when using `uv run`.
+The LLM does **not** directly execute `get_order_status()`.
+
+The application remains the control plane.
 
 ---
 
-## 4. Install Project Dependencies
-
-Install FastAPI, Uvicorn, Groq, Pydantic, and dotenv support:
-
-```powershell
-uv add fastapi "uvicorn[standard]" groq python-dotenv pydantic
-```
-
-Install development dependencies:
-
-```powershell
-uv add --dev pytest
-```
-
-The dependencies are recorded automatically in:
-
-```text
-pyproject.toml
-```
-
-and locked in:
-
-```text
-uv.lock
-```
-
----
-
-## 5. Create the Source Structure
-
-The Python package for this project is:
-
-```text
-llm_tool_calling
-```
-
-Create the required directories:
-
-```powershell
-mkdir src\llm_tool_calling\llm
-mkdir src\llm_tool_calling\schemas
-mkdir src\llm_tool_calling\services
-mkdir src\llm_tool_calling\tools
-mkdir tests
-```
-
-Create package initialization files:
-
-```powershell
-New-Item src\llm_tool_calling\llm\__init__.py
-New-Item src\llm_tool_calling\schemas\__init__.py
-New-Item src\llm_tool_calling\services\__init__.py
-New-Item src\llm_tool_calling\tools\__init__.py
-```
-
-If it does not already exist, create:
-
-```powershell
-New-Item src\llm_tool_calling\main.py
-```
-
----
-
-## 6. Project Structure
-
-At this stage the project should look similar to:
+## Project Structure
 
 ```text
 llm-tool-calling/
-│
-├── .venv/
+|
 ├── .env
 ├── .env.example
 ├── .gitignore
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
-│
+|
 ├── src/
 │   └── llm_tool_calling/
+│       |
 │       ├── __init__.py
 │       ├── main.py
-│       │
+│       |
 │       ├── llm/
-│       │   └── __init__.py
-│       │
+│       │   ├── __init__.py
+│       │   ├── base.py
+│       │   └── groq_client.py
+│       |
 │       ├── schemas/
-│       │   └── __init__.py
-│       │
+│       │   ├── __init__.py
+│       │   ├── chat.py
+│       │   └── tools.py
+│       |
 │       ├── services/
-│       │   └── __init__.py
-│       │
+│       │   ├── __init__.py
+│       │   ├── chat_service.py
+│       │   └── order_assistant.py
+│       |
 │       └── tools/
-│           └── __init__.py
+│           ├── __init__.py
+│           ├── order_tools.py
+│           ├── schemas.py
+│           ├── registry.py
+│           └── executor.py
 │
 └── tests/
+    ├── test_llm.py
+    ├── test_order_tools.py
+    ├── test_tool_schemas.py
+    ├── test_tool_executor.py
+    └── test_order_assistant.py
 ```
 
 ---
 
-## 7. Configure FastAPI
+# Core Components
 
-Add the following to:
+## 1. LLM Abstraction
+
+`LLMClient` defines the interface expected by application services.
 
 ```text
-src/llm_tool_calling/main.py
+Application Service
+        |
+        v
+     LLMClient
+        ^
+        |
+  GroqLLMClient
 ```
 
+The application depends on the abstraction rather than directly depending on the Groq SDK.
+
+This makes it easier to:
+
+- change providers
+- test application logic
+- introduce fake LLM clients
+- reduce provider coupling
+
+The current implementation supports:
+
 ```python
-"""FastAPI entry point for the LLM Tool Calling project."""
+generate(...)
+```
 
-from fastapi import FastAPI
+for basic LLM interaction and:
 
+```python
+generate_with_tools(...)
+```
 
-app = FastAPI(
-    title="LLM Tool Calling Demo",
-    version="0.1.0",
-)
+for tool-enabled conversations.
 
+---
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    """Return application health status."""
-    return {"status": "ok"}
+## 2. Groq LLM Adapter
+
+`GroqLLMClient` implements `LLMClient` using the Groq Python SDK.
+
+The adapter is responsible for provider-specific communication.
+
+```text
+Application
+    |
+    v
+LLMClient
+    |
+    v
+GroqLLMClient
+    |
+    v
+Groq SDK
+    |
+    v
+LLM
+```
+
+The current model is configured through the environment:
+
+```env
+GROQ_MODEL=openai/gpt-oss-20b
 ```
 
 ---
 
-## 8. Configure Environment Variables
+## 3. Tool Implementation
+
+The project currently provides:
+
+```python
+get_order_status(order_id)
+```
+
+The tool returns mock order information such as:
+
+```json
+{
+  "order_id": "12345",
+  "status": "shipped",
+  "estimated_delivery": "2026-09-25"
+}
+```
+
+Tool implementation is independent of the LLM.
+
+Conceptually, this function could later call:
+
+- an order database
+- REST API
+- ERP system
+- CRM
+- microservice
+- external service
+
+without changing the fundamental tool-calling architecture.
+
+---
+
+## 4. Tool Schema
+
+The LLM does not inspect Python functions directly.
+
+Instead, the application provides a tool schema describing:
+
+- tool name
+- tool purpose
+- accepted parameters
+- required parameters
+
+Example conceptually:
+
+```json
+{
+  "name": "get_order_status",
+  "description": "Get the current status of an order",
+  "parameters": {
+    "order_id": {
+      "type": "string"
+    }
+  }
+}
+```
+
+The schema is the **model-facing contract**.
+
+The Python function is the **application implementation**.
+
+These are deliberately separate concerns.
+
+---
+
+## 5. Tool Argument Validation
+
+LLM-generated tool arguments must not be trusted automatically.
+
+The project validates arguments using Pydantic.
+
+For example:
+
+```text
+LLM-generated JSON arguments
+        |
+        v
+json.loads()
+        |
+        v
+Python dictionary
+        |
+        v
+GetOrderStatusArgs
+        |
+        v
+Pydantic validation
+        |
+        v
+Validated arguments
+```
+
+Invalid arguments are rejected before the tool is executed.
+
+---
+
+## 6. Tool Registry
+
+The application maintains an explicit registry of executable tools.
+
+Conceptually:
+
+```text
+Tool Name
+    |
+    v
+TOOL_REGISTRY
+    |
+    +--> Python Function
+    |
+    +--> Argument Validator
+```
+
+Example:
+
+```python
+TOOL_REGISTRY = {
+    "get_order_status": {
+        "function": get_order_status,
+        "validator": GetOrderStatusArgs,
+    }
+}
+```
+
+This registry acts as an application-controlled allowlist.
+
+The model cannot execute an arbitrary Python function simply by generating its name.
+
+---
+
+## 7. Tool Executor
+
+`execute_tool()` is responsible for controlled execution.
+
+Its responsibilities are:
+
+```text
+Tool Request
+    |
+    v
+Check Registry
+    |
+    v
+Parse Arguments
+    |
+    v
+Validate Arguments
+    |
+    v
+Locate Function
+    |
+    v
+Execute Function
+    |
+    v
+Return Result
+```
+
+Unknown tools are rejected.
+
+Invalid arguments are rejected.
+
+Only registered tools can be executed.
+
+---
+
+## 8. Order Assistant Orchestration
+
+`OrderAssistantService` implements the complete LLM tool-calling lifecycle.
+
+The service coordinates:
+
+```text
+LLM
+ |
+Tool Schema
+ |
+Tool Request
+ |
+Tool Executor
+ |
+Tool Result
+ |
+Conversation History
+ |
+LLM
+ |
+Final Answer
+```
+
+The service handles two paths.
+
+### Path A — No Tool Required
+
+```text
+User
+ |
+ v
+LLM
+ |
+ v
+Normal Response
+ |
+ v
+Return to User
+```
+
+Only one LLM call is required.
+
+### Path B — Tool Required
+
+```text
+User
+ |
+ v
+LLM Call #1
+ |
+ v
+Tool Request
+ |
+ v
+Application Validation
+ |
+ v
+Tool Execution
+ |
+ v
+Tool Result
+ |
+ v
+LLM Call #2
+ |
+ v
+Final Natural-Language Response
+```
+
+---
+
+# Message History
+
+Tool calling requires conversation state to be preserved.
+
+A simplified message sequence looks like:
+
+```text
+[
+    User Message,
+
+    Assistant Tool Request,
+
+    Tool Result
+]
+```
+
+The second LLM call receives this history so the model knows:
+
+1. what the user asked
+2. which tool it requested
+3. what result the application returned
+
+The `tool_call_id` acts as a correlation identifier between the model's tool request and the application's tool result.
+
+```text
+Assistant Tool Request
+        |
+        | tool_call_id
+        v
+Application Tool Result
+```
+
+---
+
+# Security Boundary
+
+A central principle of the project is:
+
+```text
+LLM = decision/request layer
+
+Application = execution/control layer
+```
+
+The model may request:
+
+```text
+get_order_status
+```
+
+but the application decides:
+
+- whether the tool exists
+- whether it is allowed
+- whether arguments are valid
+- whether execution should proceed
+- what result is returned
+
+This separation becomes especially important for tools that can perform write operations or access sensitive enterprise systems.
+
+---
+
+# Testing Strategy
+
+The project uses `pytest`.
+
+Run all tests with:
+
+```powershell
+uv run pytest -v
+```
+
+The current test suite covers:
+
+- LLM abstraction
+- dependency injection
+- order tool behavior
+- tool argument validation
+- unknown tool rejection
+- controlled tool execution
+- complete LLM → Tool → LLM orchestration
+- direct LLM responses without tool execution
+
+---
+
+## Testing Without Real LLM Calls
+
+Automated orchestration tests do not call Groq.
+
+Instead, fake LLM implementations simulate provider responses.
+
+```text
+              FAKE
+               |
+               v
+          LLM Call #1
+               |
+               v
+          Tool Request
+               |
+               v
+             REAL
+               |
+               v
+         execute_tool()
+               |
+               v
+         TOOL_REGISTRY
+               |
+               v
+      Pydantic Validation
+               |
+               v
+      get_order_status()
+               |
+               v
+           Tool Result
+               |
+               v
+              FAKE
+               |
+               v
+          LLM Call #2
+               |
+               v
+          Final Answer
+```
+
+This provides deterministic tests while avoiding:
+
+- network dependency
+- API cost
+- model variability
+- provider outages
+- API credentials in automated tests
+
+---
+
+# Setup
+
+## Prerequisites
+
+- Python 3.13+
+- `uv`
+- Git
+- Groq API key
+
+---
+
+## Clone the Repository
+
+```powershell
+git clone <repository-url>
+cd llm-tool-calling
+```
+
+---
+
+## Install Dependencies
+
+```powershell
+uv sync
+```
+
+---
+
+## Configure Environment Variables
 
 Create:
 
@@ -372,95 +700,40 @@ Create:
 .env
 ```
 
-Later this file will contain local secrets such as:
-
-```env
-GROQ_API_KEY=your-groq-api-key
-GROQ_MODEL=llama-3.1-8b-instant
-```
-
-Never commit `.env` to Git.
-
-Create:
+using:
 
 ```text
 .env.example
 ```
 
-with:
+Example:
 
 ```env
-GROQ_API_KEY=
-GROQ_MODEL=llama-3.1-8b-instant
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-20b
 ```
 
-`.env.example` documents the required configuration without exposing secrets.
+Never commit `.env`.
 
 ---
 
-## 9. Configure `.gitignore`
-
-Add:
-
-```gitignore
-# Virtual environment
-.venv/
-
-# Environment variables / secrets
-.env
-
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Testing
-.pytest_cache/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-```
-
-This is particularly important because `.env` will eventually contain the Groq API key.
-
----
-
-## 10. Start the FastAPI Application
-
-Run:
+## Run the Application
 
 ```powershell
 uv run uvicorn llm_tool_calling.main:app --reload
 ```
 
-Expected output should include:
-
-```text
-Uvicorn running on http://127.0.0.1:8000
-Application startup complete.
-```
+The application can then be inspected through FastAPI's local interactive API documentation.
 
 ---
 
-## 11. Test the Health Endpoint
+## Health Check
 
-Open:
+The application currently exposes:
 
-```text
-http://127.0.0.1:8000/docs
-```
-
-Swagger UI should display:
-
-```text
+```http
 GET /health
 ```
-
-Execute the endpoint.
 
 Expected response:
 
@@ -470,1012 +743,286 @@ Expected response:
 }
 ```
 
-You can also access:
-
-```text
-http://127.0.0.1:8000/health
-```
-
-Expected:
-
-```json
-{
-  "status": "ok"
-}
-```
-
 ---
 
-## 12. Verify the Project
+## Basic Chat Endpoint
 
-Run:
+The application also provides:
 
-```powershell
-uv run python --version
-```
-
-Then:
-
-```powershell
-uv run pytest
-```
-
-At this stage there may not yet be tests, but pytest should start successfully.
-
----
-
-# Development Roadmap
-
-## Stage 1 — Project Foundation
-
-* Initialize Python project with `uv`
-* Create package structure
-* Configure FastAPI
-* Add `/health` endpoint
-* Verify application startup
-
-## Stage 2 — LLM Abstraction
-
-Create a provider-independent LLM interface and implement a Groq adapter.
-
-```text
-Application
-     │
-     ▼
- LLM Interface
-     │
-     ▼
-Groq Adapter
-     │
-     ▼
- Groq SDK
-     │
-     ▼
-    LLM
-```
-
-## Stage 3 — First Tool
-
-Implement:
-
-```text
-get_order_status(order_id)
-```
-
-The tool will initially use mock order data so that tool behavior can be tested independently from the LLM.
-
-## Stage 4 — Tool Schema
-
-Define the model-facing schema describing:
-
-```text
-get_order_status
-```
-
-This separates:
-
-```text
-Tool implementation
-        ≠
-Tool definition/schema
-        ≠
-Tool execution
-```
-
-## Stage 5 — Argument Validation
-
-Use Pydantic to validate model-generated tool arguments before execution.
-
-```text
-LLM Tool Request
-       ↓
-JSON Arguments
-       ↓
-Pydantic
-       ↓
-Validated Arguments
-       ↓
-Tool Execution
-```
-
-## Stage 6 — Tool Registry
-
-Introduce a registry that maps model-selected tool names to application-controlled Python implementations.
-
-## Stage 7 — Tool Execution Loop
-
-Implement:
-
-```text
-LLM
- ↓
-Tool Request
- ↓
-Validation
- ↓
-Tool Execution
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Final Response
-```
-
-## Stage 8 — FastAPI Order Assistant
-
-Expose:
-
-```text
-POST /orders/assistant
+```http
+POST /chat
 ```
 
 Example request:
 
 ```json
 {
-  "message": "Where is order 12345?"
+  "message": "What is tool calling?"
 }
 ```
 
+The endpoint demonstrates the basic application → LLM interaction.
+
+The order-assistant tool-calling flow currently exists at the service layer and will be exposed through an API endpoint in the next stage.
+
+---
+
+# Development Stages
+
+## Stage 1 — Project Foundation
+
+Completed:
+
+- Python project setup
+- `uv`
+- FastAPI
+- `/health`
+- project package structure
+- Git initialization
+
+---
+
+## Stage 2 — LLM Abstraction
+
+Completed:
+
+- `LLMClient`
+- `GroqLLMClient`
+- dependency injection
+- `ChatService`
+- `/chat`
+- fake LLM testing
+
+---
+
+## Stage 3 — First Tool
+
+Completed:
+
+- `get_order_status`
+- mock order data
+- unit tests for tool behavior
+
+---
+
+## Stage 4 — Tool Schema and Tool Selection
+
+Completed:
+
+- model-facing tool schema
+- tool-enabled Groq request
+- automatic tool selection
+- inspection of model-generated tool calls
+
+---
+
+## Stage 5 — Tool Argument Validation
+
+Completed:
+
+- Pydantic argument models
+- JSON argument parsing
+- valid argument handling
+- invalid argument rejection
+
+---
+
+## Stage 6 — Tool Registry and Executor
+
+Completed:
+
+- `TOOL_REGISTRY`
+- controlled tool lookup
+- argument validation before execution
+- unknown tool rejection
+- centralized `execute_tool()`
+
+---
+
+## Stage 7 — LLM Tool Calling Orchestration
+
+Completed:
+
+- message-history-aware LLM calls
+- `OrderAssistantService`
+- first LLM call
+- tool request detection
+- application-controlled tool execution
+- tool result serialization
+- `tool_call_id` correlation
+- second LLM call
+- final natural-language answer
+- no-tool/direct-answer path
+- automated orchestration tests using fake LLM clients
+
+The application now supports the complete:
+
+```text
+LLM
+ ↓
+Tool Request
+ ↓
+Application Execution
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Final Answer
+```
+
+lifecycle.
+
+---
+
+## Stage 8 — Order Assistant API
+
+Planned:
+
+Expose the completed `OrderAssistantService` through FastAPI.
+
+Target architecture:
+
+```text
+Client
+  |
+  v
+FastAPI
+  |
+  v
+OrderAssistantService
+  |
+  v
+LLM Tool Calling Loop
+  |
+  v
+Final Response
+```
+
+---
+
 ## Stage 9 — Multiple Tools
 
-Add:
+Planned:
+
+Introduce additional tools such as:
 
 ```text
 get_customer_orders(customer_id)
 ```
 
-The model will then select the appropriate tool based on the user's request.
+and explore:
+
+- multiple tool definitions
+- tool selection
+- multiple tool calls
+- iterative tool execution
+
+---
 
 ## Stage 10 — Production Hardening
 
-Introduce:
+Planned topics include:
 
-* Unknown tool handling
-* Invalid arguments
-* Tool execution failures
-* Logging
-* Authorization
-* Tool policies
-* Read vs write tools
-* Guardrails
-* Human approval for high-impact operations
+- error handling
+- malformed model arguments
+- tool execution failures
+- structured logging
+- tracing
+- authentication
+- authorization
+- tool-level permissions
+- read vs write tools
+- guardrails
+- human approval
+- timeouts
+- retries
+- observability
 
 ---
 
-# Engineering Principles
+# Current Limitation
 
-## Separate API and Business Logic
-
-FastAPI endpoints should remain thin.
-
-Application and AI orchestration logic belongs in the service layer.
-
-## Separate LLM Provider Integration
-
-```text
-Application Service
-       ↓
-LLM Abstraction
-       ↓
-Provider Adapter
-       ↓
-Provider SDK
-```
-
-This prevents application logic from becoming tightly coupled to a particular model provider.
-
-## Tools Must Be Independently Testable
-
-For example:
+The current orchestration handles the first requested tool call:
 
 ```python
-get_order_status("12345")
+assistant_message.tool_calls[0]
 ```
 
-should work and be testable without involving an LLM.
+This is intentionally simple for the learning stage.
 
-## Never Trust Model-Generated Arguments Directly
-
-Tool arguments generated by an LLM must pass application-side validation.
-
-## The LLM Does Not Own Execution
-
-A production execution path may eventually look like:
+A more production-oriented implementation would use an iterative tool loop capable of processing:
 
 ```text
 LLM
- ↓
-Tool Request
- ↓
-Schema Validation
- ↓
-Authorization
- ↓
-Business Policy
- ↓
-Guardrails
- ↓
-Human Approval
- ↓
-Tool Execution
+ |
+ +--> Tool A
+ |
+ +--> Tool B
+ |
+ +--> Tool C
+ |
+ v
+Final Answer
 ```
+
+until the model stops requesting tools or an application-defined stopping condition is reached.
 
 ---
 
-# Project Status
+# Engineering Principles Demonstrated
 
-# Project Status
+This project intentionally applies several production-oriented engineering principles.
 
-## Stage 1 — Project Foundation ✅
+### Dependency Inversion
 
-Completed:
+Application services depend on `LLMClient`, not directly on the Groq SDK.
 
-* [x] Project initialized with `uv`
-* [x] Virtual environment created
-* [x] Dependencies installed
-* [x] Python package structure created
-* [x] FastAPI application created
-* [x] `GET /health` endpoint created
-* [x] Development server verified
+### Separation of Concerns
 
----
+Tool implementation, tool schemas, validation, execution, orchestration, and provider communication are separated.
 
-## Stage 2 — LLM Abstraction ✅
+### Explicit Tool Allowlisting
 
-Completed:
+Only tools registered by the application can be executed.
 
-* [x] Created provider-independent `LLMClient` abstraction
-* [x] Implemented `GroqLLMClient`
-* [x] Added environment-based API key and model configuration
-* [x] Added `ChatService`
-* [x] Added Pydantic `ChatRequest` and `ChatResponse` schemas
-* [x] Added `POST /chat` endpoint
-* [x] Added `FakeLLMClient` for testing
-* [x] Verified application logic without making real LLM calls
-* [x] Verified Groq integration
+### Validate Before Execution
 
-Current LLM architecture:
+LLM-generated arguments are treated as untrusted input and validated before reaching application functions.
 
-```text
-FastAPI
-   │
-   ▼
-ChatService
-   │
-   ▼
-LLMClient
-   ▲
-   │
-GroqLLMClient
-   │
-   ▼
-Groq SDK
-   │
-   ▼
-LLM
-```
+### Application-Controlled Execution
 
-This keeps the application layer independent of a specific LLM provider.
+The model can request actions but does not directly execute application code.
+
+### Test External Boundaries
+
+External LLM calls are replaced with deterministic fakes during orchestration testing.
 
 ---
 
-## Stage 3 — First Tool Implementation ✅
+# Key Mental Model
 
-Implemented:
-
-```text
-get_order_status(order_id)
-```
-
-Completed:
-
-* [x] Created `tools/order_tools.py`
-* [x] Implemented `get_order_status()`
-* [x] Added mock order data
-* [x] Added handling for unknown orders
-* [x] Tested the tool independently from the LLM
-* [x] Added unit tests for shipped orders
-* [x] Added unit tests for processing orders
-* [x] Added unit tests for unknown orders
-
-Current tool architecture:
+The most important concept demonstrated by this project is:
 
 ```text
-Python Application
-       │
-       ▼
-get_order_status()
-       │
-       ▼
-Mock Order Data
-       │
-       ▼
-Order Result
+The LLM is not the application.
+
+The LLM proposes.
+The application validates.
+The application executes.
+The application controls.
 ```
 
-At this stage the tool is an ordinary Python application capability.
+Tool calling connects probabilistic model reasoning with deterministic application capabilities.
 
-The LLM does **not yet know that this tool exists**.
-
-This separation is intentional:
+A production AI system therefore requires both:
 
 ```text
-Tool Implementation
-        ≠
-Tool Schema
-        ≠
-Tool Execution
+Model Intelligence
+       +
+Application Engineering
 ```
 
-The tool implementation defines what the **application can do**.
+The model determines what capability may be useful.
 
-The next stage will define what the **model is told it can request**.
-
----
-
-## Current Test Coverage
-
-The project currently tests:
-
-```text
-LLM abstraction
-    │
-    ├── FakeLLMClient
-    │
-    └── ChatService
-         
-Order tools
-    │
-    ├── shipped order
-    ├── processing order
-    └── unknown order
-```
-
-Run all tests with:
-
-```powershell
-uv run pytest -v
-```
-
-Expected result at this milestone:
-
-```text
-5 passed
-```
-
----
-
-## Stage 4 — Tool Schema and LLM Tool Selection ✅
-
-The `get_order_status` application capability is now exposed to the LLM through a tool schema.
-
-### What Was Added
-
-* [x] Created `tools/schemas.py`
-* [x] Defined the `get_order_status` tool schema
-* [x] Added a clear tool name and description
-* [x] Defined `order_id` as a required string parameter
-* [x] Added `generate_with_tools()` to `GroqLLMClient`
-* [x] Passed available tools to the LLM
-* [x] Used `tool_choice="auto"` to allow the model to decide when a tool is needed
-* [x] Verified that the LLM can select `get_order_status`
-* [x] Inspected the tool name and arguments generated by the LLM
-* [x] Verified that unrelated questions can be answered without selecting the order tool
-
-### Tool Schema
-
-The LLM does not have direct access to the Python function:
-
-```python
-get_order_status(order_id)
-```
-
-Instead, the application provides the LLM with a description of the capability:
-
-```text
-Tool Schema
-    │
-    ├── Name
-    │     get_order_status
-    │
-    ├── Description
-    │     Get the current fulfillment status and
-    │     estimated delivery date for an order
-    │
-    └── Parameters
-          └── order_id
-                ├── type: string
-                └── required
-```
-
-The schema acts as the **model-facing contract** for the tool.
-
-### Current Tool-Calling Flow
-
-When the user asks:
-
-```text
-Where is order 12345?
-```
-
-the current flow is:
-
-```text
-User
- │
- │ "Where is order 12345?"
- ▼
-LLM
- │
- │ receives available tool schemas
- ▼
-Tool Selection
- │
- ▼
-Tool Call Request
- │
- ├── name: get_order_status
- │
- └── arguments:
- │       {"order_id":"12345"}
- │
- ▼
-STOP
-```
-
-At this stage, the LLM can **request** a tool, but the application does not execute the requested function yet.
-
-### Important Architecture Principle
-
-Tool selection and tool execution are separate responsibilities:
-
-```text
-LLM
- │
- │ selects/request capability
- ▼
-Tool Call Request
- │
- │
- ▼
-Application
- │
- │ validates and controls execution
- ▼
-Python Tool
-```
-
-The LLM does not directly execute:
-
-```python
-get_order_status()
-```
-
-Instead, it produces a structured request describing which tool it wants the application to invoke.
-
-This keeps the application as the control plane.
-
-### Tool Implementation vs Tool Schema
-
-The project now contains two separate concepts:
-
-```text
-Tool Implementation
--------------------
-
-get_order_status(order_id)
-        │
-        ▼
-Executable Python capability
-
-
-Tool Schema
------------
-
-ORDER_TOOLS
-        │
-        ▼
-Model-facing description
-of the capability
-```
-
-The tool implementation defines:
-
-> What can the application do?
-
-The tool schema defines:
-
-> What can the LLM request?
-
-The matching name `get_order_status` does not automatically connect the schema to the Python function. Controlled mapping and execution will be added in later stages.
-
----
-## Stage 5 — Tool Argument Validation ✅
-
-LLM-generated tool arguments are now parsed and validated before they can be used by the application.
-
-### What Was Added
-
-* [x] Created `schemas/tools.py`
-* [x] Added the `GetOrderStatusArgs` Pydantic model
-* [x] Defined `order_id` as a required string
-* [x] Added minimum-length validation for `order_id`
-* [x] Inspected raw arguments returned by the LLM
-* [x] Parsed the LLM-generated JSON string using `json.loads()`
-* [x] Validated parsed arguments using Pydantic
-* [x] Verified that missing `order_id` is rejected
-* [x] Verified that an empty `order_id` is rejected
-* [x] Added automated tests for tool argument validation
-
-### Current Validation Flow
-
-The LLM returns tool arguments as a JSON string:
-
-```text id="f3l5ge"
-'{"order_id":"12345"}'
-```
-
-The application does not pass this directly to the tool.
-
-Instead:
-
-```text id="ftdk06"
-LLM
- │
- ▼
-Tool Call Request
- │
- └── arguments:
-     '{"order_id":"12345"}'
- │
- │
- ▼
-json.loads()
- │
- ▼
-Python Dictionary
- │
- └── {"order_id": "12345"}
- │
- │
- ▼
-Pydantic
- │
- ▼
-GetOrderStatusArgs
- │
- └── order_id = "12345"
- │
- ▼
-Validated Arguments
-```
-
-### Parsing vs Validation
-
-JSON parsing and application validation solve different problems.
-
-```text id="8acbxm"
-json.loads()
-     │
-     └── "Is this valid JSON?"
-              │
-              ▼
-         Python object
-
-
-Pydantic
-     │
-     └── "Does this data satisfy
-          my application's contract?"
-              │
-              ▼
-        Validated model
-```
-
-For example, this is valid JSON:
-
-```json id="49t5y5"
-{}
-```
-
-but it is not valid input for `get_order_status` because `order_id` is required.
-
-Similarly:
-
-```json id="k23axr"
-{
-  "order_id": ""
-}
-```
-
-is valid JSON but fails application validation because `order_id` must contain at least one character.
-
-### Pydantic Argument Model
-
-The application now defines the contract:
-
-```python id="2s7shb"
-class GetOrderStatusArgs(BaseModel):
-    """Arguments accepted by the get_order_status tool."""
-
-    order_id: str = Field(
-        min_length=1,
-        description="Unique order identifier.",
-    )
-```
-
-This provides an explicit validation boundary between model-generated data and application execution.
-
-### Tool Schema vs Validation Schema
-
-The project now contains two related but distinct schemas:
-
-```text id="9hs6hn"
-tools/schemas.py
-      │
-      │ Tool definition
-      ▼
-     LLM
-      │
-      │ Generates tool request
-      ▼
-Raw Arguments
-      │
-      ▼
-schemas/tools.py
-      │
-      │ Pydantic validation
-      ▼
- Application
-```
-
-`tools/schemas.py` answers:
-
-> What arguments should the LLM generate?
-
-`schemas/tools.py` answers:
-
-> What arguments will the application accept?
-
-These are separate responsibilities.
-
-### Current Architecture
-
-The project has now progressed to:
-
-```text id="ayk9tt"
-User
- │
- ▼
-LLM
- │
- │ sees tool schema
- ▼
-Tool Selection
- │
- ▼
-Tool Call Request
- │
- ├── name: get_order_status
- │
- └── arguments: '{"order_id":"12345"}'
- │
- ▼
-JSON Parsing
- │
- ▼
-Pydantic Validation
- │
- ▼
-Validated Arguments
- │
- ▼
-STOP
-```
-
-The application still does **not automatically execute** `get_order_status()`.
-
-That separation is intentional.
-
----
-
-
-## Stage 6 — Tool Registry and Controlled Execution ✅
-
-The application now has a central registry that maps model-visible tool names to their validation models and executable Python functions.
-
-### What Was Added
-
-- [x] Created `tools/registry.py`
-- [x] Added `TOOL_REGISTRY`
-- [x] Registered `get_order_status`
-- [x] Associated `GetOrderStatusArgs` with the tool
-- [x] Associated the Python `get_order_status` function with the tool
-- [x] Added dynamic tool lookup by name
-- [x] Added protection against unknown tools
-- [x] Created `tools/executor.py`
-- [x] Added JSON argument parsing
-- [x] Added dynamic Pydantic validation
-- [x] Added controlled function execution
-- [x] Added automated executor tests
-
-### Tool Registry
-
-The registry provides the controlled mapping between the name generated by the LLM and application code:
-
-```text
-"get_order_status"
-        │
-        ▼
-┌───────────────────────────────┐
-│ TOOL_REGISTRY                 │
-│                               │
-│ function                      │
-│   → get_order_status          │
-│                               │
-│ validator                     │
-│   → GetOrderStatusArgs        │
-└───────────────────────────────┘
-```
-
-The application does not dynamically execute arbitrary function names generated by the LLM.
-
-Only explicitly registered tools are eligible for execution.
-
-### Tool Executor
-
-The application now provides:
-
-```python
-execute_tool(
-    tool_name,
-    raw_arguments,
-)
-```
-
-The executor performs:
-
-```text
-Tool Name + Raw Arguments
-          │
-          ▼
-     Registry Lookup
-          │
-          ▼
-     Tool Registered?
-       /          \
-     No            Yes
-     │              │
-     ▼              ▼
-   Reject       JSON Parsing
-                    │
-                    ▼
-              Pydantic Validation
-                    │
-                    ▼
-              Validated Arguments
-                    │
-                    ▼
-              Registered Function
-                    │
-                    ▼
-                  Execute
-                    │
-                    ▼
-                  Result
-```
-
-### Security Boundary
-
-The registry acts as an application-level allowlist.
-
-For example, if the model requests:
-
-```text
-delete_everything
-```
-
-but that tool is not registered:
-
-```text
-LLM
- │
- ▼
-"delete_everything"
- │
- ▼
-TOOL_REGISTRY.get(...)
- │
- ▼
-None
- │
- ▼
-REJECT
-```
-
-No arbitrary Python function is executed.
-
-### Validation and Execution
-
-For a valid request:
-
-```text
-get_order_status
-+
-'{"order_id":"12345"}'
-        │
-        ▼
-execute_tool()
-        │
-        ├── Registry lookup
-        │
-        ├── json.loads()
-        │
-        ├── GetOrderStatusArgs validation
-        │
-        └── get_order_status(...)
-        │
-        ▼
-{
-    "order_id": "12345",
-    "status": "shipped",
-    "estimated_delivery": "2026-09-25"
-}
-```
-
-### Current Architecture
-
-The project now supports:
-
-```text
-User
- │
- ▼
-LLM
- │
- │ selects tool
- ▼
-Tool Call
- │
- ├── name
- └── arguments
- │
- ▼
-Tool Registry
- │
- ▼
-Tool Executor
- │
- ├── allowlist check
- ├── JSON parsing
- ├── Pydantic validation
- └── function execution
- │
- ▼
-Tool Result
- │
- ▼
-STOP
-```
-
-The tool result is not yet sent back to the LLM.
-
----
-
-## Next Stage — Full LLM → Tool → LLM Loop
-
-Stage 7 will complete the tool-calling lifecycle.
-
-Current flow:
-
-```text
-User
- ↓
-LLM
- ↓
-Tool Request
- ↓
-Tool Executor
- ↓
-Tool Result
- ↓
-STOP
-```
-
-Target flow:
-
-```text
-User
- ↓
-LLM
- ↓
-Tool Request
- ↓
-Tool Executor
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Natural-Language Answer
-```
-
-For example:
-
-```text
-User:
-"Where is order 12345?"
-
-        ↓
-
-LLM:
-Request get_order_status
-{"order_id":"12345"}
-
-        ↓
-
-Application:
-Execute registered tool
-
-        ↓
-
-Tool Result:
-{
-  "status": "shipped",
-  "estimated_delivery": "2026-09-25"
-}
-
-        ↓
-
-LLM:
-"Order 12345 has shipped and is
-expected to arrive on September 25."
-```
-
-This will complete the first end-to-end tool-calling workflow.
-
-### Remaining Roadmap
-
-```text
-Stage 7
-LLM → Tool → LLM Execution Loop
-        ↓
-Stage 8
-Order Assistant API
-        ↓
-Stage 9
-Multiple Tools
-        ↓
-Stage 10
-Production Hardening
-```
-
----
-
-# Future Enhancements
-
-Potential extensions include:
-
-* OpenAI adapter
-* Azure OpenAI adapter
-* Amazon Bedrock adapter
-* Tool authorization policies
-* Async tool execution
-* Observability and tracing
-* Tool execution metrics
-* LLM evaluation
-* Guardrails
-* Persistent conversation state
-* RAG tools
-* MCP integration
-* Multi-step agent workflows
-
----
-
-# Purpose
-
-This repository is primarily a learning project for understanding the engineering foundations behind **LLM applications, tool calling, and agentic AI systems**.
-
-Rather than hiding orchestration behind an agent framework, the initial implementation builds the tool-calling loop explicitly so that each architectural responsibility can be understood and tested.
+The application determines what is actually permitted to happen.

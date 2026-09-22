@@ -38,19 +38,35 @@ class GroqLLMClient(LLMClient):
 
         return response.choices[0].message.content or ""
 
-    def generate_with_tools(self, 
-                            message: str, 
-                            tools: list[dict]):
-        """Generate a response with tools available to the model."""
+
+    # def generate_with_tools(self, 
+    #                         message: str, 
+    #                         tools: list[dict]):
+    #     """Generate a response with tools available to the model."""
+
+    #     response = self.client.chat.completions.create(
+    #         model=self.model,
+    #         messages=[
+    #             {
+    #                 "role": "user",
+    #                 "content": message,
+    #             }
+    #         ],
+    #         tools=tools,
+    #         tool_choice="auto",
+    #     )
+
+    #     return response
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ):
+        """Generate a response using conversation history and available tools."""
 
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": message,
-                }
-            ],
+            messages=messages,
             tools=tools,
             tool_choice="auto",
         )
