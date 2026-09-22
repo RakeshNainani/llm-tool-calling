@@ -24,3 +24,25 @@ def get_order_status(order_id: str) -> dict:
             "status": "not_found",
         },
     )
+
+
+def get_customer_orders(customer_id: str) -> dict:
+    """Return orders associated with a customer."""
+
+    customer_orders = {
+        "C001": [
+            "12345",
+            "67890",
+        ],
+        "C002": [
+            "67890",
+        ],
+    }
+
+    return {
+        "customer_id": customer_id,
+        "order_ids": customer_orders.get(
+            customer_id,
+            [],
+        ),
+    }

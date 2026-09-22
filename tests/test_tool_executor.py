@@ -40,3 +40,31 @@ def test_invalid_tool_arguments_are_rejected() -> None:
             "get_order_status",
             '{"order_id":""}',
         )
+
+def test_execute_customer_orders_tool() -> None:
+    result = execute_tool(
+        "get_customer_orders",
+        '{"customer_id":"C001"}',
+    )
+
+    assert result["customer_id"] == "C001"
+    assert result["order_ids"] == [
+        "12345",
+        "67890",
+    ]
+
+def test_execute_customer_orders_unknown_customer() -> None:
+    result = execute_tool(
+        "get_customer_orders",
+        '{"customer_id":"C999"}',
+    )
+
+    assert result["customer_id"] == "C999"
+    assert result["order_ids"] == []
+
+def test_customer_orders_invalid_arguments_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        execute_tool(
+            "get_customer_orders",
+            '{"customer_id":""}',
+        )

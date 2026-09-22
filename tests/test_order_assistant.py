@@ -2,7 +2,7 @@
 
 from llm_tool_calling.llm.base import LLMClient
 from llm_tool_calling.services.order_assistant import OrderAssistantService
-
+import pytest
 
 class FakeFunction:
     """Represents the function requested by the fake LLM."""
@@ -150,7 +150,103 @@ class FakeDirectAnswerLLM(LLMClient):
 
         return FakeResponse(message)
 
+class FakeNeverEndingToolLLM(LLMClient):
+    """Fake LLM that always requests another tool."""
 
+    def generate(self, message: str) -> str:
+        raise NotImplementedError
+
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ):
+        return FakeResponse(
+            FakeMessage(
+                tool_calls=[
+                    FakeToolCall(
+                        "call_loop",
+                        FakeFunction(
+                            "get_order_status",
+                            '{"order_id":"12345"}',
+                        ),
+                    )
+                ]
+            )
+        )
+
+class FakeMultiToolLLM(LLMClient):
+    """Fake LLM that requires multiple rounds of tool execution."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def generate(self, message: str) -> str:
+        raise NotImplementedError
+
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ):
+        self.call_count += 1
+
+        # First LLM turn:
+        # find the customer's orders.
+        if self.call_count == 1:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_customer_orders",
+                            FakeFunction(
+                                "get_customer_orders",
+                                '{"customer_id":"C001"}',
+                            ),
+                        )
+                    ]
+                )
+            )
+
+        # Second LLM turn:
+        # check the status of both discovered orders.
+        if self.call_count == 2:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_order_12345",
+                            FakeFunction(
+                                "get_order_status",
+                                '{"order_id":"12345"}',
+                            ),
+                        ),
+                        FakeToolCall(
+                            "call_order_67890",
+                            FakeFunction(
+                                "get_order_status",
+                                '{"order_id":"67890"}',
+                            ),
+                        ),
+                    ]
+                )
+            )
+
+        # Third LLM turn:
+        # return the final answer.
+        return FakeResponse(
+            FakeMessage(
+                content=(
+                    "Customer C001 has orders 12345 and 67890. "
+                    "Order 12345 is shipped and order 67890 "
+                    "is processing."
+                ),
+                tool_calls=None,
+            )
+        )
+
+
+    
 def test_order_assistant_without_tool_call() -> None:
     """Test that a direct LLM answer does not execute a tool."""
 
@@ -161,7 +257,7 @@ def test_order_assistant_without_tool_call() -> None:
 
     assert answer == "Shipped means the order has left the warehouse."
     assert llm.call_count == 1
-    
+
 def test_order_assistant_with_tool_call() -> None:
     """Test the complete LLM -> tool -> LLM flow."""
 
@@ -172,3 +268,33 @@ def test_order_assistant_with_tool_call() -> None:
 
     assert answer == "Order 12345 has shipped."
     assert llm.call_count == 2
+
+
+def test_order_assistant_stops_after_max_iterations() -> None:
+    llm = FakeNeverEndingToolLLM()
+    assistant = OrderAssistantService(llm)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Maximum tool-calling iterations exceeded",
+    ):
+        assistant.answer(
+            "Keep checking order 12345."
+        )
+
+def test_order_assistant_handles_multiple_tool_rounds() -> None:
+    llm = FakeMultiToolLLM()
+    assistant = OrderAssistantService(llm)
+
+    answer = assistant.answer(
+        "What orders does customer C001 have "
+        "and what is their status?"
+    )
+
+    assert answer == (
+        "Customer C001 has orders 12345 and 67890. "
+        "Order 12345 is shipped and order 67890 "
+        "is processing."
+    )
+
+    assert llm.call_count == 3

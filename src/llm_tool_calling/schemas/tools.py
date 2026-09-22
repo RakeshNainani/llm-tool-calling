@@ -10,3 +10,12 @@ class GetOrderStatusArgs(BaseModel):
         min_length=1,
         description="Unique order identifier.",
     )
+
+
+class GetCustomerOrdersArgs(BaseModel):
+    """Arguments accepted by the get_customer_orders tool."""
+
+    customer_id: str = Field(
+        min_length=1,
+        description="Unique customer identifier.",
+    )

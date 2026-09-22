@@ -1537,19 +1537,26 @@ HTTP
 
 ---
 
-# Next Stage
+## Stage 9 — Multiple Tools and Iterative Tool Calling
 
-## Stage 9 — Multiple Tools
+Completed:
 
-Planned next step:
+- Added `get_customer_orders(customer_id)`
+- Added `GetCustomerOrdersArgs`
+- Added the `get_customer_orders` LLM tool schema
+- Registered the second tool in `TOOL_REGISTRY`
+- Added validation and executor tests for the second tool
+- Enabled semantic tool selection between multiple tools
+- Replaced single `tool_calls[0]` handling with iteration over all requested tool calls
+- Replaced the fixed two-LLM-call workflow with an iterative tool-calling loop
+- Added support for multiple tool calls in a single LLM response
+- Added support for sequential tool calls across multiple LLM turns
+- Added a maximum tool-calling iteration limit
+- Added automated multi-tool orchestration tests
 
-Introduce another order/customer capability such as:
+### Available Tools
 
-```python
-get_customer_orders(customer_id)
-```
-
-The model will then have multiple available tools:
+The model currently has access to two application capabilities:
 
 ```text
 LLM
@@ -1559,15 +1566,314 @@ LLM
  +--> get_customer_orders(customer_id)
 ```
 
-This stage will explore:
+The LLM selects a tool based on the user's intent.
 
-- multiple tool schemas
-- model tool selection
-- tool dispatch
-- multiple available capabilities
-- iterative tool calls
-- multiple tool calls in a conversation
-- moving beyond `tool_calls[0]`
+For example:
+
+```text
+"Where is order 12345?"
+        |
+        v
+get_order_status(
+    order_id="12345"
+)
+```
+
+while:
+
+```text
+"What orders does customer C001 have?"
+        |
+        v
+get_customer_orders(
+    customer_id="C001"
+)
+```
+
+No application-level keyword routing is required.
+
+The model performs semantic tool selection using the tool names, descriptions and parameter schemas.
+
+### Multi-Step Tool Composition
+
+The application can now support requests that require multiple capabilities.
+
+For example:
+
+```text
+"What orders does customer C001 have,
+and tell me the status of those orders?"
+```
+
+can result in:
+
+```text
+User
+ |
+ v
+LLM Turn 1
+ |
+ v
+get_customer_orders("C001")
+ |
+ v
+["12345", "67890"]
+ |
+ v
+LLM Turn 2
+ |
+ +--> get_order_status("12345")
+ |
+ +--> get_order_status("67890")
+ |
+ v
+Tool Results
+ |
+ v
+LLM Turn 3
+ |
+ v
+Final Combined Answer
+```
+
+This demonstrates two forms of tool composition.
+
+#### Sequential Tool Calling
+
+One tool result can lead the model to request another capability:
+
+```text
+LLM
+ |
+ v
+get_customer_orders
+ |
+ v
+Tool Result
+ |
+ v
+LLM
+ |
+ v
+get_order_status
+```
+
+#### Multiple Tool Calls in One Turn
+
+The model can also request multiple independent tool calls in the same response:
+
+```text
+LLM
+ |
+ +--> get_order_status("12345")
+ |
+ +--> get_order_status("67890")
+```
+
+The application executes every requested tool call and adds each result to the conversation history.
+
+### Iterative Tool Loop
+
+The original implementation assumed:
+
+```text
+LLM
+ |
+ v
+One Tool
+ |
+ v
+LLM
+ |
+ v
+Final Answer
+```
+
+Stage 9 replaces this with:
+
+```text
+             +-----------------------+
+             |                       |
+             v                       |
+            LLM                      |
+             |                       |
+             v                       |
+        Tool calls?                  |
+          /     \                    |
+        No       Yes                 |
+        |         |                  |
+        v         v                  |
+      Return    Execute              |
+      Answer    Tool(s)              |
+                  |                  |
+                  v                  |
+             Add Results             |
+                  |                  |
+                  +------------------+
+```
+
+Conceptually:
+
+```python
+for _ in range(MAX_TOOL_ITERATIONS):
+    response = llm.generate_with_tools(...)
+
+    if not response.tool_calls:
+        return response.content
+
+    for tool_call in response.tool_calls:
+        result = execute_tool(...)
+
+        # add result to conversation history
+```
+
+The orchestration therefore continues until either:
+
+1. the model produces a final response, or
+2. the application's maximum iteration limit is reached.
+
+### Application-Controlled Stopping Condition
+
+Tool-calling loops must not be allowed to execute indefinitely.
+
+The application therefore defines:
+
+```python
+MAX_TOOL_ITERATIONS = 5
+```
+
+Conceptually:
+
+```text
+LLM
+ ↓
+Tool
+ ↓
+LLM
+ ↓
+Tool
+ ↓
+...
+ ↓
+Maximum iterations reached
+ ↓
+STOP
+```
+
+If the model continues requesting tools beyond the configured limit, the application raises an error rather than continuing indefinitely.
+
+This protects against:
+
+- runaway tool loops
+- unnecessary LLM calls
+- excessive token consumption
+- increased latency
+- unnecessary API cost
+- provider rate-limit pressure
+
+The stopping condition belongs to the application rather than the model.
+
+### Stage 9 Architecture
+
+```text
+                         User
+                          |
+                          v
+                       FastAPI
+                          |
+                          v
+                OrderAssistantService
+                          |
+                          v
+                         LLM
+                          |
+                    Tool Request(s)
+                          |
+                          v
+                    TOOL_REGISTRY
+                          |
+              +-----------+-----------+
+              |                       |
+              v                       v
+   GetOrderStatusArgs       GetCustomerOrdersArgs
+              |                       |
+              v                       v
+    get_order_status()      get_customer_orders()
+              |                       |
+              +-----------+-----------+
+                          |
+                          v
+                     Tool Results
+                          |
+                          v
+                    Message History
+                          |
+                          v
+                         LLM
+                          |
+                  More tools needed?
+                     /         \
+                   Yes          No
+                    |            |
+                    +-----+      v
+                          |   Final Answer
+                          |
+                          +----> repeat
+```
+
+The LLM controls tool selection and reasoning.
+
+The application controls:
+
+- available tools
+- argument validation
+- tool execution
+- iteration limits
+- conversation state
+- stopping conditions
+
+### Multi-Tool Testing
+
+Stage 9 includes deterministic tests that simulate:
+
+```text
+LLM Call #1
+    |
+    v
+get_customer_orders("C001")
+    |
+    v
+Application executes tool
+    |
+    v
+LLM Call #2
+    |
+    +--> get_order_status("12345")
+    |
+    +--> get_order_status("67890")
+    |
+    v
+Application executes both tools
+    |
+    v
+LLM Call #3
+    |
+    v
+Final Answer
+```
+
+The external LLM is replaced with a fake while the real application orchestration, registry, validation and tool execution remain active.
+
+This verifies multi-tool behavior without depending on:
+
+- network connectivity
+- Groq availability
+- API credentials
+- model variability
+- token cost
+
+---
+# Next Stage
 
 ---
 

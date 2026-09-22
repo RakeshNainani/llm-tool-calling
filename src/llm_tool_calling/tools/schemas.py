@@ -21,5 +21,25 @@ ORDER_TOOLS = [
                 "required": ["order_id"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_customer_orders",
+            "description": (
+                "Get the order IDs associated with a customer "
+                "using the customer's unique customer ID."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {
+                        "type": "string",
+                        "description": "Unique customer identifier.",
+                    }
+                },
+                "required": ["customer_id"],
+            },
+        },
+    },
 ]

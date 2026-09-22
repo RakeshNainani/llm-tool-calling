@@ -1,7 +1,9 @@
 """Tests for order tools."""
 
-from llm_tool_calling.tools.order_tools import get_order_status
-
+from llm_tool_calling.tools.order_tools import (
+    get_customer_orders,
+    get_order_status,
+)
 
 def test_get_order_status_shipped() -> None:
     result = get_order_status("12345")
@@ -23,3 +25,19 @@ def test_get_order_status_not_found() -> None:
 
     assert result["order_id"] == "99999"
     assert result["status"] == "not_found"
+
+def test_get_customer_orders() -> None:
+    result = get_customer_orders("C001")
+
+    assert result["customer_id"] == "C001"
+    assert result["order_ids"] == [
+        "12345",
+        "67890",
+    ]
+
+
+def test_get_customer_orders_unknown_customer() -> None:
+    result = get_customer_orders("C999")
+
+    assert result["customer_id"] == "C999"
+    assert result["order_ids"] == []
