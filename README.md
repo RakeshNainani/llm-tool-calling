@@ -1873,34 +1873,518 @@ This verifies multi-tool behavior without depending on:
 - token cost
 
 ---
-# Next Stage
+## Stage 10 — Production Hardening
+
+Stage 10 improves the tool-calling application from a working prototype toward a more production-oriented implementation.
+
+The focus of this stage is:
+
+- predictable tool error handling
+- structured tool results
+- safe failure propagation to the LLM
+- execution observability
+- request correlation
+- stronger automated testing
+
+### 10.1 Normalized Tool Errors
+
+A dedicated `ToolExecutionError` provides a consistent error boundary around tool execution.
+
+```python
+class ToolExecutionError(Exception):
+    """Raised when a tool request cannot be safely executed."""
+```
+
+Tool failures are normalized into four categories:
+
+```text
+unknown_tool
+malformed_arguments
+invalid_arguments
+execution_failed
+```
+
+This separates internal Python exceptions from the error contract exposed by the tool layer.
+
+The execution pipeline is now:
+
+```text
+Tool Request
+     │
+     ▼
+Registry Lookup
+     │
+     ├── unknown ───────► unknown_tool
+     │
+     ▼
+JSON Parsing
+     │
+     ├── invalid JSON ──► malformed_arguments
+     │
+     ▼
+Pydantic Validation
+     │
+     ├── invalid ───────► invalid_arguments
+     │
+     ▼
+Tool Execution
+     │
+     ├── exception ─────► execution_failed
+     │
+     ▼
+Success
+```
 
 ---
 
-## Stage 10 — Production Hardening
+### 10.2 Structured Tool Results
 
-Future topics include:
+Tool execution now uses a consistent result envelope.
 
-- malformed model arguments
-- unknown tool handling
-- tool execution failures
-- provider failures
-- timeouts
-- retries
-- structured logging
-- tracing
-- observability
-- authentication
-- authorization
-- tool-level permissions
-- read vs write tools
-- audit trails
-- guardrails
-- human approval
-- rate limiting
-- cost monitoring
-- evaluation
-- dependency management
+Successful result:
+
+```json
+{
+  "success": true,
+  "result": {
+    "order_id": "12345",
+    "status": "shipped"
+  },
+  "error": null
+}
+```
+
+Failed result:
+
+```json
+{
+  "success": false,
+  "result": null,
+  "error": {
+    "type": "invalid_arguments",
+    "message": "Tool arguments failed validation.",
+    "tool_name": "get_order_status"
+  }
+}
+```
+
+The result contract is represented using:
+
+```text
+ToolResult
+└── success
+└── result
+└── error
+      ├── type
+      ├── message
+      └── tool_name
+```
+
+This gives the application and LLM a predictable tool-response format.
+
+---
+
+### 10.3 Tool Result State Validation
+
+`ToolResult` uses Pydantic validation to prevent contradictory states.
+
+Valid:
+
+```text
+success=True
+result=<data>
+error=None
+```
+
+Valid:
+
+```text
+success=False
+result=None
+error=<ToolError>
+```
+
+Invalid combinations are rejected:
+
+```text
+success=True  + error present
+success=False + error missing
+success=False + result present
+```
+
+This prevents invalid tool-result states from propagating through the orchestration layer.
+
+---
+
+### 10.4 Tool Failures Become LLM Observations
+
+A tool failure does not automatically terminate the entire request.
+
+Instead:
+
+```text
+LLM
+ │
+ ▼
+Tool Request
+ │
+ ▼
+Tool Executor
+ │
+ ├── success
+ │      │
+ │      ▼
+ │   ToolResult
+ │
+ └── failure
+        │
+        ▼
+   ToolExecutionError
+        │
+        ▼
+   ToolResult(success=False)
+        │
+        ▼
+       LLM
+```
+
+The LLM can then explain the failure or continue reasoning.
+
+For example:
+
+```text
+Tool arguments invalid
+        │
+        ▼
+Application catches error
+        │
+        ▼
+Structured failure returned to LLM
+        │
+        ▼
+LLM generates useful response
+```
+
+This introduces an important production principle:
+
+> **Tool failure does not necessarily mean request failure.**
+
+---
+
+### 10.5 Tool Execution Logging
+
+Tool execution now produces operational logs.
+
+Successful execution records:
+
+```text
+tool
+request_id
+duration_ms
+```
+
+Example:
+
+```text
+Tool execution succeeded:
+tool=get_order_status
+request_id=request-123
+duration_ms=0.05
+```
+
+Rejected tool requests record an error category:
+
+```text
+Tool execution rejected:
+tool=get_order_status
+request_id=request-123
+error_type=invalid_arguments
+```
+
+Execution failures are logged separately:
+
+```text
+Tool execution failed:
+tool=get_order_status
+request_id=request-123
+error_type=execution_failed
+duration_ms=12.45
+```
+
+Raw tool arguments are intentionally not included in logs.
+
+---
+
+### 10.6 Tool Execution Duration
+
+Actual tool execution time is measured using:
+
+```python
+time.perf_counter()
+```
+
+Conceptually:
+
+```text
+start_time
+    │
+    ▼
+Execute Tool
+    │
+    ▼
+end_time
+    │
+    ▼
+duration_ms
+```
+
+This creates the foundation for future metrics such as:
+
+```text
+tool latency
+slow tool detection
+tool performance dashboards
+SLA/SLO monitoring
+```
+
+---
+
+### 10.7 Request / Correlation IDs
+
+Every HTTP request now receives a request ID.
+
+A client can provide:
+
+```text
+X-Request-ID: request-123
+```
+
+If the client does not provide one, the application generates a UUID.
+
+The request ID flows through the application:
+
+```text
+Client
+  │
+  │ X-Request-ID
+  ▼
+FastAPI Middleware
+  │
+  ▼
+request.state.request_id
+  │
+  ▼
+API Endpoint
+  │
+  ▼
+OrderAssistantService
+  │
+  ▼
+Tool Executor
+  │
+  ▼
+Application Logs
+```
+
+The same request ID is returned in the HTTP response:
+
+```text
+X-Request-ID
+```
+
+This makes it possible to correlate one user request with its internal tool executions.
+
+---
+
+### 10.8 Observability Model
+
+Stage 10 establishes the first observability layer for the application.
+
+```text
+HTTP Request
+     │
+     │ request_id
+     ▼
+OrderAssistantService
+     │
+     ▼
+LLM Tool Request
+     │
+     ▼
+Tool Executor
+     │
+     ├── tool_name
+     ├── request_id
+     ├── outcome
+     ├── error_type
+     └── duration_ms
+```
+
+This can later evolve into:
+
+```text
+Structured JSON Logs
+        │
+        ├── Metrics
+        ├── Dashboards
+        ├── Alerts
+        └── Distributed Tracing
+```
+
+---
+
+### 10.9 Security Improvements
+
+Stage 10 strengthens several execution boundaries.
+
+```text
+LLM-generated input
+       │
+       ▼
+Registry Allowlist
+       │
+       ▼
+JSON Parsing
+       │
+       ▼
+Pydantic Validation
+       │
+       ▼
+Controlled Execution
+       │
+       ▼
+Normalized Result
+```
+
+Key principles:
+
+- the LLM never directly executes Python functions
+- only registered tools can execute
+- tool arguments are treated as untrusted input
+- malformed arguments are rejected
+- validation failures are normalized
+- internal exceptions are not directly exposed
+- raw tool arguments are not logged
+- tool loops remain bounded
+
+---
+
+### 10.10 Testing
+
+Stage 10 added tests covering:
+
+```text
+ToolExecutionError
+unknown tool rejection
+malformed JSON arguments
+invalid tool arguments
+tool execution failures
+structured successful ToolResult
+structured failed ToolResult
+ToolResult state invariants
+tool failure feedback to LLM
+execution logging
+request ID generation
+request ID preservation
+request ID propagation
+```
+
+Current test status:
+
+```text
+41 passed
+```
+
+---
+
+### Stage 10 Architecture
+
+The application architecture at the end of Stage 10 is:
+
+```text
+                         User
+                          │
+                          ▼
+                     FastAPI API
+                          │
+                          │ Request ID
+                          ▼
+                OrderAssistantService
+                          │
+                          ▼
+                         LLM
+                          │
+                    Tool Request
+                          │
+                          ▼
+                    Tool Registry
+                          │
+                          ▼
+                     JSON Parsing
+                          │
+                          ▼
+                 Pydantic Validation
+                          │
+                          ▼
+                    Tool Executor
+                     /         \
+                    /           \
+               Success         Failure
+                  │               │
+                  │        ToolExecutionError
+                  │               │
+                  └───────┬───────┘
+                          ▼
+                     ToolResult
+                          │
+                          ▼
+                         LLM
+                          │
+                          ▼
+                    Final Answer
+
+Observability:
+Request ID + Tool Name + Outcome + Error Type + Duration
+```
+
+### Stage 10 Key Learning
+
+The major architectural progression in this stage is:
+
+```text
+Before Stage 10
+
+LLM
+ ↓
+Tool
+ ↓
+Result
+
+
+After Stage 10
+
+LLM
+ ↓
+Tool Request
+ ↓
+Application Control Boundary
+ ↓
+Registry
+ ↓
+Parsing
+ ↓
+Validation
+ ↓
+Controlled Execution
+ ↓
+Normalized Success / Failure
+ ↓
+Observable ToolResult
+ ↓
+LLM
+```
+
+The application is therefore responsible not only for executing tools, but also for enforcing the **execution contract, failure contract, safety boundary, and observability boundary** around those tools.
 
 ---
 

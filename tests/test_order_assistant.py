@@ -1,8 +1,11 @@
 """Tests for the order assistant orchestration."""
 
+import json
+import pytest
+
 from llm_tool_calling.llm.base import LLMClient
 from llm_tool_calling.services.order_assistant import OrderAssistantService
-import pytest
+
 
 class FakeFunction:
     """Represents the function requested by the fake LLM."""
@@ -245,7 +248,51 @@ class FakeMultiToolLLM(LLMClient):
             )
         )
 
+class FakeInvalidArgumentsLLM(LLMClient):
+    """Fake LLM that first requests a tool with invalid arguments."""
 
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.received_messages: list[dict] = []
+
+    def generate(self, message: str) -> str:
+        raise NotImplementedError
+
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ):
+        self.call_count += 1
+        self.received_messages = list(messages)
+
+        if self.call_count == 1:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_invalid",
+                            FakeFunction(
+                                "get_order_status",
+                                '{"order_id":""}',
+                            ),
+                        )
+                    ]
+                )
+            )
+
+        return FakeResponse(
+            FakeMessage(
+                content=(
+                    "I could not check the order because "
+                    "the order ID was invalid."
+                ),
+                tool_calls=None,
+            )
+        )
+
+
+    
     
 def test_order_assistant_without_tool_call() -> None:
     """Test that a direct LLM answer does not execute a tool."""
@@ -298,3 +345,29 @@ def test_order_assistant_handles_multiple_tool_rounds() -> None:
     )
 
     assert llm.call_count == 3
+
+def test_order_assistant_returns_tool_error_to_llm() -> None:
+    llm = FakeInvalidArgumentsLLM()
+    assistant = OrderAssistantService(llm)
+
+    answer = assistant.answer(
+        "Check my order."
+    )
+
+    assert answer == (
+        "I could not check the order because "
+        "the order ID was invalid."
+    )
+
+    assert llm.call_count == 2
+    tool_message = llm.received_messages[-1]
+
+    assert tool_message["role"] == "tool"
+
+    tool_content = json.loads(
+        tool_message["content"]
+    )
+
+    assert tool_content["success"] is False
+    assert tool_content["error"]["type"] == "invalid_arguments"
+    assert tool_content["error"]["tool_name"] == "get_order_status"
