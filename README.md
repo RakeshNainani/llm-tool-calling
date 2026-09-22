@@ -1,4 +1,4 @@
-# LLM Tool Calling Demo
+# LLM Tool Calling
 
 A hands-on Python project for learning how **LLM tool/function calling** works inside a production-style application architecture.
 
@@ -37,7 +37,6 @@ This project is designed to build practical understanding of:
 
 The project will evolve toward the following architecture:
 
-```text
                          Client
                            │
                            ▼
@@ -79,7 +78,7 @@ The project will evolve toward the following architecture:
                            │
                            ▼
                     Final Response
-```
+
 
 ---
 
@@ -87,37 +86,33 @@ The project will evolve toward the following architecture:
 
 A common misconception is:
 
-```text
-LLM
- ↓
-Python Function
-```
+                LLM
+                 ↓
+            Python Function
+
 
 The actual architecture is:
-
-```text
-User
- ↓
-Application
- ↓
-LLM
- ↓
-Structured Tool Request
- ↓
-Application Validation
- ↓
-Tool Registry
- ↓
-Python Function
- ↓
-External System
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Final Response
-```
+           User
+            ↓
+        Application
+            ↓
+           LLM
+            ↓
+        Structured Tool Request
+            ↓
+        Application Validation
+            ↓
+        Tool Registry
+            ↓
+        Python Function
+            ↓
+        External System
+            ↓
+        Tool Result
+            ↓
+           LLM
+            ↓
+        Final Response
 
 The **application remains the control plane**.
 
@@ -125,17 +120,11 @@ The **application remains the control plane**.
 
 ## Example
 
-A user asks:
-
-```text
-Where is order 12345?
-```
+A user asks:   
+    Where is order 12345?
 
 The LLM determines that it does not have the current order status and requests:
-
-```text
-get_order_status(order_id="12345")
-```
+    get_order_status(order_id="12345")
 
 Conceptually, the model generates structured data similar to:
 
@@ -719,26 +708,27 @@ Tool Execution
 
 Current milestone:
 
-```text
-Stage 1 — Project Foundation
-```
+Stage 2 — LLM Abstraction Layer
 
 Completed:
 
-* [x] Project initialized
-* [x] Virtual environment created
-* [x] Dependencies installed
-* [x] Package structure created
-* [x] FastAPI application created
-* [x] Health endpoint created
-* [x] Development server verified
-* [x] README created
+- [x] Project initialized
+- [x] Virtual environment created
+- [x] Dependencies installed
+- [x] Package structure created
+- [x] FastAPI application created
+- [x] Health endpoint created
+- [x] Provider-independent `LLMClient` abstraction
+- [x] Groq provider adapter
+- [x] Environment-based model configuration
+- [x] `ChatService`
+- [x] Pydantic chat request/response schemas
+- [x] `POST /chat` endpoint
+- [x] Fake LLM unit tests
 
 Next:
 
-```text
-Stage 2 — LLM Abstraction Layer
-```
+Stage 3 — First Tool: `get_order_status`
 
 ---
 
